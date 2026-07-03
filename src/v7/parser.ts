@@ -168,12 +168,11 @@ export class v7Parser {
     const textElements: IPro7SlideTextElement[] = [];
 
     for (const element of slide.elements) {
-      if (!element.element?.text) {
+      const graphicsElement = element.element;
+      const textData = graphicsElement?.text;
+      if (!textData) {
         continue; // Skip non-text elements
       }
-
-      const graphicsElement = element.element;
-      const textData = element.element?.text;
 
       // Extract plain text from RTF data
       const rtfString = this.convertRtfDataToString(textData.rtfData);

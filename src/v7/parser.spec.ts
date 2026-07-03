@@ -1,13 +1,29 @@
 import { readFileSync } from 'fs';
 
+import { IProElementShadow } from '../shared.model';
 import { v7Parser } from './parser';
-import { IPro7Arrangement, IPro7Properties, IPro7SlideGroup } from './parser.model';
+import { IPro7Arrangement, IPro7Properties, IPro7Slide, IPro7SlideGroup, IPro7SlideTextElement } from './parser.model';
+
+interface V7ParserInternals {
+  convertRtfDataToString(rtfData: unknown): string;
+  convertShadowToTextShadow(shadow: unknown): IProElementShadow;
+  convertColor(color: unknown): { r: number; g: number; b: number };
+  convertTimestamp(timestamp: unknown): Date | undefined;
+  extractFontInfo(textData: unknown): { fontName: string; textColor: { r: number; g: number; b: number }; textSize: number };
+  extractTextElements(slide: unknown): IPro7SlideTextElement[];
+  getProperties(presentation: unknown): IPro7Properties;
+  getSlideGroups(presentation: unknown): IPro7SlideGroup[];
+  createSlideFromCue(cue: unknown): IPro7Slide | null;
+  getArrangements(presentation: unknown, slideGroups: unknown): IPro7Arrangement[];
+}
 
 describe('V7 - Parser', (): void => {
   let parser: v7Parser;
+  let internals: V7ParserInternals;
 
   beforeEach(() => {
     parser = new v7Parser();
+    internals = parser as unknown as V7ParserInternals;
   });
 
   it('should exist', () => {
@@ -866,5 +882,441 @@ describe('V7 - Parser', (): void => {
         ],
       },
     ] as IPro7SlideGroup[]);
+  });
+
+  it('should parse string input by converting to Uint8Array', () => {
+    const stringInput = 'invalid string content';
+
+    expect(() => {
+      parser.parse(stringInput);
+    }).toThrow();
+  });
+
+  it('should handle empty RTF data using private method test', () => {
+    const result = internals.convertRtfDataToString(new Uint8Array(0));
+    expect(result).toBe('');
+  });
+
+  it('should handle RTF decode error using private method test', () => {
+    const consoleSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = internals.convertRtfDataToString('test');
+
+    expect(result).toBe('');
+    expect(consoleSpy).toHaveBeenCalled();
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should handle null shadow using private method test', () => {
+    const result = internals.convertShadowToTextShadow(null);
+
+    expect(result).toEqual({
+      enabled: false,
+      color: { r: 0, g: 0, b: 0 },
+      angle: 135,
+      length: 0,
+      radius: 0,
+    });
+  });
+
+  it('should handle cues with no slide actions for line 121', () => {
+    const mockCue = {
+      uuid: { string: 'test-cue-id' },
+      name: 'Test Cue',
+      isEnabled: true,
+      hotKey: { controlIdentifier: 'test-hotkey' },
+      actions: [],
+    };
+
+    const result = internals.createSlideFromCue(mockCue);
+
+    expect(result).toEqual({
+      backgroundColor: { r: 0, g: 0, b: 0 },
+      chordChartPath: '',
+      drawingBackgroundColor: false,
+      enabled: true,
+      hotKey: 'test-hotkey',
+      id: 'test-cue-id',
+      label: 'Test Cue',
+      notes: '',
+      textElements: [],
+    });
+  });
+
+  it('should return null for slide actions that are not slide data for line 137', () => {
+    const mockCue = {
+      uuid: { string: 'test-cue-id' },
+      name: 'Test Cue',
+      isEnabled: true,
+      hotKey: { controlIdentifier: 'test-hotkey' },
+      actions: [
+        {
+          type: 11,
+          ActionTypeData: {
+            case: 'clearType',
+            value: {},
+          },
+        },
+      ],
+    };
+
+    const result = internals.createSlideFromCue(mockCue);
+
+    expect(result).toBe(null);
+  });
+
+  it('should handle cues with non-presentation slide actions for line 141', () => {
+    const mockCue = {
+      uuid: { string: 'test-cue-id' },
+      name: 'Test Cue',
+      isEnabled: true,
+      hotKey: { controlIdentifier: 'test-hotkey' },
+      actions: [
+        {
+          type: 11,
+          ActionTypeData: {
+            case: 'slide',
+            value: {
+              Slide: {
+                case: 'library',
+                value: {},
+              },
+            },
+          },
+        },
+      ],
+    };
+
+    const result = internals.createSlideFromCue(mockCue);
+
+    expect(result).toBe(null);
+  });
+
+  it('should handle slides with null baseSlide for line 148', () => {
+    const mockCue = {
+      uuid: { string: 'test-cue-id' },
+      name: 'Test Cue',
+      isEnabled: true,
+      hotKey: { controlIdentifier: 'test-hotkey' },
+      actions: [
+        {
+          type: 11,
+          ActionTypeData: {
+            case: 'slide',
+            value: {
+              Slide: {
+                case: 'presentation',
+                value: {
+                  baseSlide: null,
+                  chordChart: undefined,
+                  notes: undefined,
+                },
+              },
+            },
+          },
+        },
+      ],
+    };
+
+    const result = internals.createSlideFromCue(mockCue);
+
+    expect(result).toBe(null);
+  });
+
+  it('should handle slides with non-text elements for line 172', () => {
+    const mockSlide = {
+      elements: [
+        {
+          element: {
+            name: 'Non-text element',
+            text: undefined,
+          },
+        },
+        {
+          element: {
+            name: 'Text element',
+            text: {
+              rtfData: new Uint8Array([123]),
+              attributes: {
+                font: { name: 'Arial', size: 12 },
+                fill: undefined,
+              },
+            },
+          },
+        },
+      ],
+    };
+
+    const result = internals.extractTextElements(mockSlide);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].displayName).toBe('Text element');
+  });
+
+  it('should handle arrangements with group matching for lines 296-308', () => {
+    const mockPresentation = {
+      arrangements: [
+        {
+          name: 'Test Arrangement',
+          groupIdentifiers: [{ string: 'existing-group-1' }, { string: 'nonexistent-group' }, { string: 'existing-group-2' }],
+        },
+      ],
+    };
+
+    const mockSlideGroups = [
+      {
+        groupId: 'existing-group-1',
+        groupLabel: 'First Group',
+        groupColor: { r: 255, g: 0, b: 0 },
+        slides: [],
+      },
+      {
+        groupId: 'existing-group-2',
+        groupLabel: 'Second Group',
+        groupColor: { r: 0, g: 255, b: 0 },
+        slides: [],
+      },
+    ];
+
+    const result = internals.getArrangements(mockPresentation, mockSlideGroups);
+
+    expect(result).toEqual([
+      {
+        label: 'Test Arrangement',
+        groupOrder: [
+          { groupId: 'existing-group-1', groupLabel: 'First Group' },
+          { groupId: 'existing-group-2', groupLabel: 'Second Group' },
+        ],
+      },
+    ]);
+  });
+
+  it('should handle edge cases in color conversion', () => {
+    const result = internals.convertColor(undefined);
+
+    expect(result).toEqual({ r: 0, g: 0, b: 0 });
+  });
+
+  it('should handle timestamp conversion with undefined timestamp', () => {
+    const result = internals.convertTimestamp(undefined);
+
+    expect(result).toBeUndefined();
+  });
+
+  it('should use fallback values in convertColor when channels are missing', () => {
+    const result = internals.convertColor({});
+
+    expect(result).toEqual({ r: 0, g: 0, b: 0 });
+  });
+
+  it('should use fallback values in convertTimestamp when fields are missing', () => {
+    const result = internals.convertTimestamp({});
+
+    expect(result).toEqual(new Date(0));
+  });
+
+  it('should use fallback values in convertShadowToTextShadow when fields are missing', () => {
+    const result = internals.convertShadowToTextShadow({});
+
+    expect(result).toEqual({
+      enabled: false,
+      color: { r: 0, g: 0, b: 0 },
+      angle: 135,
+      length: 0,
+      radius: 0,
+    });
+  });
+
+  it('should use fallback values in extractFontInfo when attributes/fields are missing', () => {
+    const noAttributes = internals.extractFontInfo({});
+    expect(noAttributes).toEqual({ fontName: 'Arial', textColor: { r: 0, g: 0, b: 0 }, textSize: 12 });
+
+    const emptyAttributes = internals.extractFontInfo({ attributes: { fill: { case: 'other', value: {} } } });
+    expect(emptyAttributes).toEqual({ fontName: 'Arial', textColor: { r: 0, g: 0, b: 0 }, textSize: 12 });
+  });
+
+  it('should use fallback values in getProperties when optional fields are missing', () => {
+    const noAppInfo = internals.getProperties({});
+    expect(noAppInfo.buildNumber).toBe(0);
+    expect(noAppInfo.os).toBe(0);
+    expect(noAppInfo.backgroundColor).toEqual({ r: 0, g: 0, b: 0 });
+    expect(noAppInfo.chordChartPath).toBe('');
+
+    const emptyNested = internals.getProperties({
+      applicationInfo: {},
+      ccli: {},
+      background: {},
+      chordChart: { RelativeFilePath: {} },
+    });
+    expect(emptyNested).toEqual({
+      CCLIArtistCredits: '',
+      CCLIAuthor: '',
+      CCLICopyrightYear: '',
+      CCLIDisplay: false,
+      CCLIPublisher: '',
+      CCLISongNumber: '',
+      CCLISongTitle: '',
+      backgroundColor: { r: 0, g: 0, b: 0 },
+      buildNumber: 0,
+      category: '',
+      chordChartPath: '',
+      drawingBackgroundColor: false,
+      lastDateUsed: undefined,
+      notes: '',
+      os: 0,
+      selectedArrangementID: '',
+    } as IPro7Properties);
+
+    const withChordChart = internals.getProperties({
+      applicationInfo: {},
+      chordChart: { RelativeFilePath: { value: { path: 'songs/chart.txt' } } },
+    });
+    expect(withChordChart.chordChartPath).toBe('songs/chart.txt');
+  });
+
+  it('should use fallback values in getSlideGroups when optional fields are missing', () => {
+    const mockPresentation = {
+      cueGroups: [
+        { group: null, cueIdentifiers: [] },
+        {
+          group: { name: undefined, uuid: undefined, color: undefined },
+          cueIdentifiers: [{ string: 'missing-cue' }, { string: 'null-slide' }],
+        },
+      ],
+      cues: [
+        { uuid: undefined, actions: [] },
+        {
+          uuid: { string: 'null-slide' },
+          actions: [
+            {
+              type: 11,
+              ActionTypeData: { case: 'slide', value: { Slide: { case: 'library', value: {} } } },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = internals.getSlideGroups(mockPresentation);
+
+    expect(result).toEqual([
+      {
+        groupLabel: '',
+        groupId: '',
+        groupColor: { r: 0, g: 0, b: 0 },
+        slides: [],
+      },
+    ]);
+  });
+
+  it('should use fallback values in createSlideFromCue basic slide when cue fields are missing', () => {
+    const result = internals.createSlideFromCue({ actions: [] });
+
+    expect(result).toEqual({
+      backgroundColor: { r: 0, g: 0, b: 0 },
+      chordChartPath: '',
+      drawingBackgroundColor: false,
+      enabled: true,
+      hotKey: '',
+      id: '',
+      label: '',
+      notes: '',
+      textElements: [],
+    });
+  });
+
+  it('should use fallback values in createSlideFromCue presentation slide when fields are missing', () => {
+    const mockCue = {
+      actions: [
+        {
+          type: 11,
+          ActionTypeData: {
+            case: 'slide',
+            value: {
+              Slide: {
+                case: 'presentation',
+                value: {
+                  baseSlide: { elements: [], backgroundColor: undefined, drawsBackgroundColor: undefined },
+                },
+              },
+            },
+          },
+        },
+      ],
+    };
+
+    const result = internals.createSlideFromCue(mockCue);
+
+    expect(result).toEqual({
+      backgroundColor: { r: 0, g: 0, b: 0 },
+      chordChartPath: '',
+      drawingBackgroundColor: false,
+      enabled: true,
+      hotKey: '',
+      id: '',
+      label: '',
+      notes: '',
+      textElements: [],
+    });
+  });
+
+  it('should read the chord chart path when present in createSlideFromCue', () => {
+    const mockCue = {
+      uuid: { string: 'cue-with-chart' },
+      name: 'Chart',
+      isEnabled: true,
+      hotKey: { controlIdentifier: 'hk' },
+      actions: [
+        {
+          type: 11,
+          ActionTypeData: {
+            case: 'slide',
+            value: {
+              Slide: {
+                case: 'presentation',
+                value: {
+                  baseSlide: { elements: [], backgroundColor: undefined, drawsBackgroundColor: true },
+                  chordChart: { RelativeFilePath: { value: { path: 'songs/chart.txt' } } },
+                },
+              },
+            },
+          },
+        },
+      ],
+    };
+
+    const result = internals.createSlideFromCue(mockCue);
+
+    expect(result?.chordChartPath).toBe('songs/chart.txt');
+    expect(result?.drawingBackgroundColor).toBe(true);
+  });
+
+  it('should skip elements without text and use display name fallback in extractTextElements', () => {
+    const mockSlide = {
+      elements: [
+        { element: undefined },
+        {
+          element: {
+            text: { rtfData: new Uint8Array(0), attributes: {} },
+          },
+        },
+      ],
+    };
+
+    const result = internals.extractTextElements(mockSlide);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].displayName).toBe('Default');
+  });
+
+  it('should use fallback label in getArrangements when arrangement name is missing', () => {
+    const mockPresentation = {
+      arrangements: [{ groupIdentifiers: [] }],
+    };
+
+    const result = internals.getArrangements(mockPresentation, []);
+
+    expect(result).toEqual([{ label: '', groupOrder: [] }]);
   });
 });
