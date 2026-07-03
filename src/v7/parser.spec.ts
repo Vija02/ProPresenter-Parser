@@ -5,16 +5,16 @@ import { v7Parser } from './parser';
 import { IPro7Arrangement, IPro7Properties, IPro7Slide, IPro7SlideGroup, IPro7SlideTextElement } from './parser.model';
 
 interface V7ParserInternals {
-  convertRtfDataToString(rtfData: unknown): string;
-  convertShadowToTextShadow(shadow: unknown): IProElementShadow;
-  convertColor(color: unknown): { r: number; g: number; b: number };
-  convertTimestamp(timestamp: unknown): Date | undefined;
-  extractFontInfo(textData: unknown): { fontName: string; textColor: { r: number; g: number; b: number }; textSize: number };
-  extractTextElements(slide: unknown): IPro7SlideTextElement[];
-  getProperties(presentation: unknown): IPro7Properties;
-  getSlideGroups(presentation: unknown): IPro7SlideGroup[];
-  createSlideFromCue(cue: unknown): IPro7Slide | null;
-  getArrangements(presentation: unknown, slideGroups: unknown): IPro7Arrangement[];
+  convertRtfDataToString(_rtfData: unknown): string;
+  convertShadowToTextShadow(_shadow: unknown): IProElementShadow;
+  convertColor(_color: unknown): { r: number; g: number; b: number };
+  convertTimestamp(_timestamp: unknown): Date | undefined;
+  extractFontInfo(_textData: unknown): { fontName: string; textColor: { r: number; g: number; b: number }; textSize: number };
+  extractTextElements(_slide: unknown): IPro7SlideTextElement[];
+  getProperties(_presentation: unknown): IPro7Properties;
+  getSlideGroups(_presentation: unknown): IPro7SlideGroup[];
+  createSlideFromCue(_cue: unknown): IPro7Slide | null;
+  getArrangements(_presentation: unknown, _slideGroups: unknown): IPro7Arrangement[];
 }
 
 describe('V7 - Parser', (): void => {
